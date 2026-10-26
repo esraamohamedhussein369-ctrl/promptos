@@ -90,6 +90,25 @@ npm start
 
 PromptOS requires a Node.js server for accounts, AI execution, email, and quotas. A static-only host such as GitHub Pages cannot run the API or keep secrets. Local development defaults to SQLite at `.data/promptos.sqlite`; production requires PostgreSQL so account and quota data survive service restarts. The included Render blueprint uses its Free web-service plan and connects to a separately provisioned Neon PostgreSQL database. Free services can sleep while idle, so expect cold starts; Neon Free has usage limits and its database may scale to zero.
 
+### Vercel deployment
+
+The repository also includes a Vercel Node.js function adapter in `api/[...route].mjs` and SPA routing in `vercel.json`. Import the GitHub repository into Vercel with the project root set to `./`; Vercel uses `npm run build` and publishes `dist`. Add the production secrets in Vercel's Environment Variables settings:
+
+```text
+DATABASE_URL=<pooled Neon PostgreSQL connection string>
+SESSION_SECRET=<random value at least 32 bytes>
+SIGNUP_INVITE_CODE=<private invite at least 12 bytes>
+ADMIN_SETUP_CODE=<separate private admin setup code at least 12 bytes>
+ADMIN_EMAIL=<administrator email>
+OPENAI_API_KEY=<provider key>
+OPENAI_BASE_URL=https://api.groq.com/openai/v1
+OPENAI_MODEL=<active Groq production model>
+RESEND_API_KEY=<Resend API key>
+EMAIL_FROM=<sender on a verified domain>
+```
+
+The adapter uses Vercel's HTTPS `VERCEL_URL` for verification links unless `APP_URL` is set. AI and email settings may be added after the initial deployment, but the related features remain unavailable until configured. Resend's `onboarding@resend.dev` sender is only suitable for limited testing to the account owner's address; public signup and password recovery require a verified sending domain. Vercel Hobby, Neon Free, Groq free-tier limits, and Resend quotas or restrictions may change; review each provider's current terms before inviting users or using the app commercially.
+
 Before production, set the variables below using the host's secret/environment configuration, build the app, and serve it behind HTTPS:
 
 ```text

@@ -7,6 +7,7 @@ import Database from 'better-sqlite3'
 import { createPromptOsServer } from './index.mjs'
 import { createResendEmailSender } from './email.mjs'
 import { createSecurityStore } from './securityStore.mjs'
+import vercelHandler from '../api/[...route].mjs'
 
 const activeServers = new Set()
 
@@ -110,6 +111,39 @@ test('health reports whether the provider is configured without exposing its API
     model: 'test-model',
   })
   assert.equal(JSON.stringify(body).includes('secret-test-key'), false)
+})
+
+test('Vercel handler returns an explicit configuration error when the database is missing', async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL
+  const previousConsoleError = console.error
+  delete process.env.DATABASE_URL
+  console.error = () => {}
+  const response = {
+    headers: {},
+    status: null,
+    body: '',
+    writeHead(status, headers) {
+      this.status = status
+      this.headers = headers
+    },
+    end(body) {
+      this.body = body
+    },
+  }
+
+  try {
+    await vercelHandler({}, response)
+  } finally {
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
+    console.error = previousConsoleError
+  }
+
+  assert.equal(response.status, 503)
+  assert.equal(response.headers['content-type'], 'application/json; charset=utf-8')
+  assert.deepEqual(JSON.parse(response.body), {
+    error: 'PromptOS is not fully configured. Check the deployment environment variables.',
+  })
 })
 
 test('chat sends prompts through the server credential and returns usage metadata', async () => {
