@@ -149,8 +149,9 @@ test('Vercel handler returns an explicit configuration error when the database i
 test('Vercel serves API functions before falling back to the SPA document', () => {
   const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
 
-  assert.deepEqual(config.routes[0], { handle: 'filesystem' })
-  assert.deepEqual(config.routes[1], { src: '/(.*)', dest: '/index.html' })
+  assert.deepEqual(config.routes[0], { src: '/api/(.*)', dest: '/api/[...route]' })
+  assert.deepEqual(config.routes[1], { handle: 'filesystem' })
+  assert.deepEqual(config.routes[2], { src: '/(.*)', dest: '/index.html' })
 })
 
 test('chat sends prompts through the server credential and returns usage metadata', async () => {

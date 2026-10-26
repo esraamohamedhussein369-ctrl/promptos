@@ -92,7 +92,7 @@ PromptOS requires a Node.js server for accounts, AI execution, email, and quotas
 
 ### Vercel deployment
 
-The repository also includes a Vercel Node.js function adapter in `api/[...route].mjs` and SPA routing in `vercel.json`. Import the GitHub repository into Vercel with the project root set to `./`; Vercel uses `npm run build` and publishes `dist`. Add the production secrets in Vercel's Environment Variables settings:
+The repository also includes a Vercel Node.js function adapter in `api/[...route].mjs` and SPA routing in `vercel.json`. API paths are routed to the serverless function before static assets and the SPA fallback. Import the GitHub repository into Vercel with the project root set to `./`; Vercel uses `npm run build` and publishes `dist`. Add the production secrets in Vercel's Environment Variables settings:
 
 ```text
 DATABASE_URL=<pooled Neon PostgreSQL connection string>
