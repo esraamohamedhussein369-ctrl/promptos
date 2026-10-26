@@ -2,21 +2,17 @@ services:
   - type: web
     name: promptos
     runtime: node
-    plan: starter
+    plan: free
     region: frankfurt
     autoDeploy: false
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
-    disk:
-      name: promptos-data
-      mountPath: /opt/render/project/src/.data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATABASE_PATH
-        value: .data/promptos.sqlite
+      - key: DATABASE_URL
+        sync: false
       - key: TRUST_PROXY
         value: "true"
       - key: AI_DAILY_LIMIT

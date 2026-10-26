@@ -32,6 +32,7 @@ The backend supports OpenAI Chat Completions and other providers that implement 
 - `RESEND_API_KEY` and `EMAIL_FROM`: Resend API credential and sender address on a domain verified with Resend.
 - `APP_URL`: public HTTPS URL used for verification and password-reset links. Render's `RENDER_EXTERNAL_URL` is used when this is unset.
 - `DATABASE_PATH`: SQLite file path; defaults to `.data/promptos.sqlite`.
+- `DATABASE_URL`: PostgreSQL connection string. Required in production; when set, the server uses PostgreSQL instead of SQLite.
 - `TRUST_PROXY`: set to `true` only when all inbound traffic reaches the service through a trusted reverse proxy that sets `X-Forwarded-For`.
 - `PORT`: server port, default `3000`.
 
@@ -87,12 +88,13 @@ npm start
 
 ## Hosting and security
 
-PromptOS now requires a Node.js server for accounts, AI execution, email, and quotas. A static-only host such as GitHub Pages cannot run the API or keep secrets. The SQLite database at `.data/promptos.sqlite` stores accounts, sessions, quotas, email tokens, security events, and persistent IP rate-limit counters. Keep it on a persistent disk and take regular protected backups. The Render blueprint provisions one web instance with a persistent disk; do not scale it to multiple instances or use shared network storage for SQLite.
+PromptOS requires a Node.js server for accounts, AI execution, email, and quotas. A static-only host such as GitHub Pages cannot run the API or keep secrets. Local development defaults to SQLite at `.data/promptos.sqlite`; production requires PostgreSQL so account and quota data survive service restarts. The included Render blueprint uses its Free web-service plan and connects to a separately provisioned Neon PostgreSQL database. Free services can sleep while idle, so expect cold starts; Neon Free has usage limits and its database may scale to zero.
 
 Before production, set the variables below using the host's secret/environment configuration, build the app, and serve it behind HTTPS:
 
 ```text
 NODE_ENV=production
+DATABASE_URL=<PostgreSQL connection string from Neon>
 SESSION_SECRET=<random value at least 32 bytes>
 SIGNUP_INVITE_CODE=<private invite at least 12 bytes>
 ADMIN_SETUP_CODE=<separate private admin setup code at least 12 bytes>
@@ -111,15 +113,16 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 
 Use separate values for `SESSION_SECRET`, `SIGNUP_INVITE_CODE`, and `ADMIN_SETUP_CODE`. Keep both invite codes private; only give the admin setup code to the configured administrator. The admin code prevents a regular invite holder from reserving the admin email before its owner registers. Rotate the signup invite to stop new registrations. Verify your sending domain in Resend before setting `EMAIL_FROM`; production startup fails closed if AI/email credentials or an HTTPS public URL are missing. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Reset requests use a generic response to avoid disclosing whether an email is registered.
 
-The Render blueprint in `render.yaml` sets production mode, persistent disk storage, HTTPS cookies, and trusted proxy address handling. Database-backed IP limits survive restarts and apply atomically across processes using the same database, but the deployment intentionally uses one instance; this is not a horizontally distributed rate limiter. Only trust proxy headers when direct access to the app is blocked by the trusted ingress. The admin dashboard records metadata, never prompt or response contents; event and usage records are retained for 90 days. Prompt workspaces and local analytics remain in each user's browser and are not synced between devices. Accounts created before email verification was introduced will need to use the verification-resend action once to activate their existing address.
+The Render blueprint in `render.yaml` configures a Free web service, HTTPS cookies, and trusted proxy address handling. Neon PostgreSQL stores accounts, sessions, quotas, email tokens, security events, and IP rate limits durably. Database-backed IP limits are atomic across processes that share the database. Only trust proxy headers when direct access to the app is blocked by the trusted ingress. The admin dashboard records metadata, never prompt or response contents; event and usage records are retained for 90 days. Prompt workspaces and local analytics remain in each user's browser and are not synced between devices. Accounts created before email verification was introduced will need to use the verification-resend action once to activate their existing address.
 
 For Render deployment:
 
-1. Generate `SIGNUP_INVITE_CODE` and `ADMIN_SETUP_CODE` as separate random values, then push this project to a GitHub repository and create a Render Blueprint from it; Render reads `render.yaml`.
-2. Enter both invite codes, `ADMIN_EMAIL`, `OPENAI_API_KEY`, `RESEND_API_KEY`, and `EMAIL_FROM` when Render prompts for unsynchronized values. Do not put credentials in Git.
-3. Verify the `EMAIL_FROM` domain with Resend. The server uses Render's generated public HTTPS URL for email links unless `APP_URL` is explicitly configured.
-4. Keep the generated `SESSION_SECRET` and invite private. Share the invite only with people you trust.
-5. Keep the one-instance configuration and persistent disk enabled. Configure regular backups before storing important accounts.
+1. Create a Neon project on its Free plan and copy its pooled PostgreSQL connection string. Keep the connection string private.
+2. Create a Render Blueprint from the GitHub repository; Render reads `render.yaml`. Select the Free web-service plan.
+3. Set `DATABASE_URL` to the Neon connection string, and enter `SIGNUP_INVITE_CODE`, `ADMIN_SETUP_CODE`, `ADMIN_EMAIL`, `OPENAI_API_KEY`, `RESEND_API_KEY`, and `EMAIL_FROM` in Render's protected environment settings. Do not put credentials in Git.
+4. Verify the `EMAIL_FROM` domain with Resend; production startup fails closed if the database, AI/email credentials, security settings, or HTTPS public URL are missing. Render's generated public HTTPS URL is used for email links unless `APP_URL` is explicitly configured.
+5. Keep `SESSION_SECRET` and both invite codes private. Share the signup invite only with people you trust, and periodically back up important account data.
+6. Free hosting does not make AI usage or a verified email-sending domain free by itself. Check the current quotas and pricing of Neon, Render, your AI provider, and Resend before inviting users.
 
 GitHub Pages alone is not suitable. A public SaaS launch may additionally require centralized alerting, abuse response, backups/restore drills, billing controls, privacy terms, and a managed database/rate-limit service before horizontal scaling.
 

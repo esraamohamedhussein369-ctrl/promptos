@@ -12,6 +12,7 @@ import {
   sessionCookie,
   sessionCookieName,
 } from './securityStore.mjs'
+import { createPostgresSecurityStore } from './postgresSecurityStore.mjs'
 import { createResendEmailSender } from './email.mjs'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -293,6 +294,7 @@ export async function createPromptOsServer({
   useVite = false,
   distDirectory = resolve(projectRoot, 'dist'),
   databasePath = resolve(projectRoot, '.data', 'promptos.sqlite'),
+  databaseUrl = config.databaseUrl,
 } = {}) {
   const maxTokens = Number(config.maxTokens)
   const timeoutMs = Number(config.timeoutMs)
@@ -335,7 +337,9 @@ export async function createPromptOsServer({
     })
   const secureCookies = config.secureCookies ?? process.env.NODE_ENV === 'production'
   const trustProxy = config.trustProxy === true
-  const securityStore = createSecurityStore(databasePath, sessionSecret)
+  const securityStore = databaseUrl
+    ? await createPostgresSecurityStore(databaseUrl, sessionSecret)
+    : createSecurityStore(databasePath, sessionSecret)
   const clientAddress = (request) => {
     if (trustProxy) {
       const forwarded = request.headers['x-forwarded-for']
@@ -347,7 +351,7 @@ export async function createPromptOsServer({
     }
     return request.socket.remoteAddress ?? 'unknown'
   }
-  const allowRequest = (scope, request, windowMs, limit) =>
+  const allowRequest = async (scope, request, windowMs, limit) =>
     securityStore.consumeRateLimit({
       scope,
       address: clientAddress(request),
@@ -361,27 +365,27 @@ export async function createPromptOsServer({
     return link.toString()
   }
   const sendVerificationEmail = async (user) => {
-    const token = securityStore.createEmailToken(user.id, 'verify_email', 24 * 60 * 60 * 1000)
+    const token = await securityStore.createEmailToken(user.id, 'verify_email', 24 * 60 * 60 * 1000)
     await emailSender({
       to: user.email,
       subject: 'Verify your PromptOS email',
       text: `Verify your email to access PromptOS:\n\n${makeEmailAction({ action: 'verify', token })}\n\nThis link expires in 24 hours. If you did not create this account, ignore this email.`,
     })
   }
-  const currentUserFor = (request) => {
+  const currentUserFor = async (request) => {
     const token = readCookie(request, sessionCookieName)
     return token ? securityStore.getSession(token) : null
   }
-  const recordEvent = (request, type, outcome, userId = null) => {
-    securityStore.recordSecurityEvent({
+  const recordEvent = async (request, type, outcome, userId = null) => {
+    return securityStore.recordSecurityEvent({
       userId,
       type,
       outcome,
       address: addressOf(request),
     })
   }
-  const quotaFor = (userId) => {
-    const usage = securityStore.getDailyUsage(userId)
+  const quotaFor = async (userId) => {
+    const usage = await securityStore.getDailyUsage(userId)
     return {
       limit: dailyLimit,
       used: usage.total ?? 0,
@@ -431,12 +435,12 @@ export async function createPromptOsServer({
       }
 
       if (url.pathname === '/api/auth/me' && request.method === 'GET') {
-        const user = currentUserFor(request)
+        const user = await currentUserFor(request)
         if (!user || user.disabled_at || !user.email_verified_at) {
           sendJson(response, 200, { user: null, quota: null, aiConfigured: Boolean(providerConfig.apiKey) })
           return
         }
-        const today = quotaFor(user.id)
+        const today = await quotaFor(user.id)
         sendJson(response, 200, {
           user: { id: user.id, email: user.email, role: user.role },
           quota: today,
@@ -456,17 +460,17 @@ export async function createPromptOsServer({
           : url.pathname === '/api/auth/register'
             ? 'registration'
             : url.pathname.replace('/api/auth/', '')
-        if (!allowRequest(authScope, request, 15 * 60_000, 15)) {
-          recordEvent(request, 'auth_rate_limited', 'rejected')
+        if (!await allowRequest(authScope, request, 15 * 60_000, 15)) {
+          await recordEvent(request, 'auth_rate_limited', 'rejected')
           sendJson(response, 429, { error: 'Too many account requests. Please wait 15 minutes and try again.' })
           return
         }
 
         if (url.pathname === '/api/auth/logout') {
           const token = readCookie(request, sessionCookieName)
-          const user = token ? currentUserFor(request) : null
-          if (token) securityStore.deleteSession(token)
-          recordEvent(request, 'logout', 'success', user?.id ?? null)
+          const user = token ? await currentUserFor(request) : null
+          if (token) await securityStore.deleteSession(token)
+          await recordEvent(request, 'logout', 'success', user?.id ?? null)
           response.setHeader('set-cookie', clearSessionCookie(secureCookies))
           sendJson(response, 200, { ok: true })
           return
@@ -475,12 +479,12 @@ export async function createPromptOsServer({
         const body = await readJsonBody(request)
         if (url.pathname === '/api/auth/verify-email') {
           const token = requireString(body?.token, 'Verification token', 256)
-          const verified = securityStore.consumeEmailToken(token, 'verify_email')
+          const verified = await securityStore.consumeEmailToken(token, 'verify_email')
           if (!verified) {
             sendJson(response, 410, { error: 'This verification link is invalid or has expired. Request a new one.' })
             return
           }
-          recordEvent(request, 'email_verified', 'success', verified.id)
+          await recordEvent(request, 'email_verified', 'success', verified.id)
           sendJson(response, 200, { ok: true, message: 'Email verified. You can sign in now.' })
           return
         }
@@ -492,14 +496,14 @@ export async function createPromptOsServer({
             error.status = 400
             throw error
           }
-          const user = securityStore.getUserByEmail(email)
+          const user = await securityStore.getUserByEmail(email)
           const isReset = url.pathname === '/api/auth/forgot-password'
           const shouldSend = user && !user.disabled_at &&
             (isReset ? Boolean(user.email_verified_at) : !user.email_verified_at)
           if (shouldSend) {
             const purpose = isReset ? 'reset_password' : 'verify_email'
             const lifetime = isReset ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000
-            const token = securityStore.createEmailToken(user.id, purpose, lifetime)
+            const token = await securityStore.createEmailToken(user.id, purpose, lifetime)
             const action = isReset ? 'reset' : 'verify'
             try {
               await emailSender({
@@ -517,7 +521,7 @@ export async function createPromptOsServer({
               }
             }
           }
-          recordEvent(request, isReset ? 'password_reset_requested' : 'verification_resent', 'accepted', user?.id ?? null)
+          await recordEvent(request, isReset ? 'password_reset_requested' : 'verification_resent', 'accepted', user?.id ?? null)
           sendJson(response, 202, {
             message: isReset
               ? 'If a verified account exists for that email, password reset instructions will be sent.'
@@ -534,13 +538,13 @@ export async function createPromptOsServer({
             error.status = 400
             throw error
           }
-          const reset = securityStore.consumeEmailToken(token, 'reset_password')
+          const reset = await securityStore.consumeEmailToken(token, 'reset_password')
           if (!reset) {
             sendJson(response, 410, { error: 'This password reset link is invalid or has expired. Request a new one.' })
             return
           }
           await securityStore.changePassword(reset.id, password)
-          recordEvent(request, 'password_reset', 'success', reset.id)
+          await recordEvent(request, 'password_reset', 'success', reset.id)
           sendJson(response, 200, { ok: true, message: 'Password updated. Sign in with your new password.' })
           return
         }
@@ -566,14 +570,14 @@ export async function createPromptOsServer({
         if (url.pathname === '/api/auth/register') {
           const suppliedInvite = typeof body?.inviteCode === 'string' ? body.inviteCode : ''
           if (!safeEqual(suppliedInvite, inviteCode)) {
-            recordEvent(request, 'signup', 'invalid_invite')
+            await recordEvent(request, 'signup', 'invalid_invite')
             sendJson(response, 403, { error: 'Invitation code is invalid.' })
             return
           }
           const isConfiguredAdmin = Boolean(adminEmail && email === adminEmail)
           const suppliedAdminCode = typeof body?.adminSetupCode === 'string' ? body.adminSetupCode : ''
           if (isConfiguredAdmin && !safeEqual(suppliedAdminCode, adminInviteCode)) {
-            recordEvent(request, 'signup', 'invalid_admin_setup_code')
+            await recordEvent(request, 'signup', 'invalid_admin_setup_code')
             sendJson(response, 403, { error: 'Invitation details are invalid.' })
             return
           }
@@ -584,11 +588,11 @@ export async function createPromptOsServer({
             !adminEmail,
           )
           if (!created) {
-            recordEvent(request, 'signup', 'duplicate_account')
+            await recordEvent(request, 'signup', 'duplicate_account')
             sendJson(response, 409, { error: 'An account with that email already exists.' })
             return
           }
-          recordEvent(request, 'signup', 'pending_verification', created.id)
+          await recordEvent(request, 'signup', 'pending_verification', created.id)
           try {
             await sendVerificationEmail(created)
           } catch (error) {
@@ -600,10 +604,10 @@ export async function createPromptOsServer({
           return
         }
 
-        const user = securityStore.getUserByEmail(email)
+        const user = await securityStore.getUserByEmail(email)
         const validPassword = await securityStore.verifyPassword(user, password)
         if (!user || !validPassword) {
-          recordEvent(request, 'login', 'invalid_credentials', user?.id ?? null)
+          await recordEvent(request, 'login', 'invalid_credentials', user?.id ?? null)
           sendJson(response, 401, { error: 'Email or password is incorrect.' })
           return
         }
@@ -611,19 +615,19 @@ export async function createPromptOsServer({
           sendJson(response, 403, { error: 'Verify your email before signing in. You can request a new verification link.' })
           return
         }
-        recordEvent(request, 'login', 'success', user.id)
-        const session = securityStore.createSession(user.id)
+        await recordEvent(request, 'login', 'success', user.id)
+        const session = await securityStore.createSession(user.id)
         response.setHeader('set-cookie', sessionCookie(session.token, sessionLifetimeSeconds, secureCookies))
         sendJson(response, 200, {
           user: { id: user.id, email: user.email, role: user.role },
-          quota: quotaFor(user.id),
+          quota: await quotaFor(user.id),
           aiConfigured: Boolean(providerConfig.apiKey),
         })
         return
       }
 
       if (url.pathname === '/api/admin/overview' && request.method === 'GET') {
-        const user = currentUserFor(request)
+        const user = await currentUserFor(request)
         if (!user || user.disabled_at || !user.email_verified_at) {
           sendJson(response, 401, { error: 'Sign in to continue.' })
           return
@@ -633,9 +637,9 @@ export async function createPromptOsServer({
           return
         }
         sendJson(response, 200, {
-          activeUsers: securityStore.getActiveUserCount(),
-          recentEvents: securityStore.getRecentEvents(50),
-          recentUsage: securityStore.getRecentUsage(50),
+          activeUsers: await securityStore.getActiveUserCount(),
+          recentEvents: await securityStore.getRecentEvents(50),
+          recentUsage: await securityStore.getRecentUsage(50),
           dailyLimit,
         })
         return
@@ -647,14 +651,14 @@ export async function createPromptOsServer({
           return
         }
         ensureAllowedOrigin(request)
-        if (!allowRequest('ai', request, rateLimitWindowMs, rateLimitRequests)) {
-          recordEvent(request, 'ai_rate_limited', 'rejected')
+        if (!await allowRequest('ai', request, rateLimitWindowMs, rateLimitRequests)) {
+          await recordEvent(request, 'ai_rate_limited', 'rejected')
           sendJson(response, 429, { error: 'Too many AI requests. Please wait a minute and try again.' })
           return
         }
-        const user = currentUserFor(request)
+        const user = await currentUserFor(request)
         if (!user || user.disabled_at || !user.email_verified_at) {
-          recordEvent(request, 'unauthorized_ai_request', 'rejected')
+          await recordEvent(request, 'unauthorized_ai_request', 'rejected')
           sendJson(response, 401, { error: 'Sign in to use AI features.' })
           return
         }
@@ -665,12 +669,12 @@ export async function createPromptOsServer({
         const userInput = isEvaluation
           ? requireString(body?.answer, 'AI response', 50_000)
           : requireString(body?.input, 'User message', 30_000)
-        const usageStart = securityStore.startAiUsage(user.id, isEvaluation ? 'evaluation' : 'run', dailyLimit)
+        const usageStart = await securityStore.startAiUsage(user.id, isEvaluation ? 'evaluation' : 'run', dailyLimit)
         if (!usageStart.allowed) {
-          recordEvent(request, 'daily_ai_quota_exceeded', 'rejected', user.id)
+          await recordEvent(request, 'daily_ai_quota_exceeded', 'rejected', user.id)
           sendJson(response, 429, {
             error: `Daily AI request limit reached (${dailyLimit}). Try again after the quota resets.`,
-            quota: quotaFor(user.id),
+            quota: await quotaFor(user.id),
           })
           return
         }
@@ -696,32 +700,32 @@ export async function createPromptOsServer({
           const durationMs = Date.now() - startedAt
           if (isEvaluation) {
             const evaluation = parseEvaluation(result.content)
-            securityStore.finishAiUsage(usageStart.id, {
+            await securityStore.finishAiUsage(usageStart.id, {
               status: 'success',
               durationMs,
               usage: result.usage,
               model: result.model,
             })
-            recordEvent(request, 'ai_evaluation', 'success', user.id)
-            sendJson(response, 200, { ...evaluation, usage: result.usage, durationMs, quota: quotaFor(user.id) })
+            await recordEvent(request, 'ai_evaluation', 'success', user.id)
+            sendJson(response, 200, { ...evaluation, usage: result.usage, durationMs, quota: await quotaFor(user.id) })
             return
           }
 
-          securityStore.finishAiUsage(usageStart.id, {
+          await securityStore.finishAiUsage(usageStart.id, {
             status: 'success',
             durationMs,
             usage: result.usage,
             model: result.model,
           })
-          recordEvent(request, 'ai_run', 'success', user.id)
-          sendJson(response, 200, { ...result, durationMs, quota: quotaFor(user.id) })
+          await recordEvent(request, 'ai_run', 'success', user.id)
+          sendJson(response, 200, { ...result, durationMs, quota: await quotaFor(user.id) })
         } catch (error) {
-          securityStore.finishAiUsage(usageStart.id, {
+          await securityStore.finishAiUsage(usageStart.id, {
             status: 'failed',
             durationMs: Date.now() - startedAt,
           })
-          recordEvent(request, isEvaluation ? 'ai_evaluation' : 'ai_run', 'failed', user.id)
-          if (error && typeof error === 'object') error.quota = quotaFor(user.id)
+          await recordEvent(request, isEvaluation ? 'ai_evaluation' : 'ai_run', 'failed', user.id)
+          if (error && typeof error === 'object') error.quota = await quotaFor(user.id)
           throw error
         }
         return
@@ -754,7 +758,9 @@ export async function createPromptOsServer({
 
   server.on('close', () => {
     void vite?.close()
-    securityStore.close()
+    void Promise.resolve()
+      .then(() => securityStore.close())
+      .catch((error) => logger.error('PromptOS could not close its security store.', error))
   })
   return server
 }
@@ -776,6 +782,9 @@ async function start() {
     }
     if (!process.env.ADMIN_EMAIL) {
       throw new Error('Set ADMIN_EMAIL to the administrator account email before production start.')
+    }
+    if (!process.env.DATABASE_URL) {
+      throw new Error('Set DATABASE_URL to a PostgreSQL connection string before production start.')
     }
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('Set OPENAI_API_KEY in the production environment before starting PromptOS.')
@@ -822,6 +831,7 @@ async function start() {
       dailyLimit: Number(process.env.AI_DAILY_LIMIT) || undefined,
       secureCookies: process.env.NODE_ENV === 'production',
       trustProxy: process.env.TRUST_PROXY === 'true',
+      databaseUrl: process.env.DATABASE_URL,
     },
     useVite,
     sendEmail,
