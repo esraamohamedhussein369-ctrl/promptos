@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createServer as createViteServer } from 'vite'
 import {
   clearSessionCookie,
   createSecurityStore,
@@ -748,6 +747,7 @@ export async function createPromptOsServer({
   })
 
   if (useVite) {
+    const { createServer: createViteServer } = await import('vite')
     vite = await createViteServer({
       configFile: resolve(projectRoot, 'vite.config.ts'),
       root: projectRoot,
