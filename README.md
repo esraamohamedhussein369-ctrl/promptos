@@ -28,7 +28,7 @@ The backend supports OpenAI Chat Completions and other providers that implement 
 - `ADMIN_EMAIL`: email address assigned the administrator role at registration. In production this is required; all accounts must verify their email before signing in.
 - `AI_DAILY_LIMIT`: maximum AI runs and evaluations combined per account per UTC day, default `20`.
 - `RESEND_API_KEY` and `EMAIL_FROM`: Resend API credential and sender address on a domain verified with Resend.
-- `APP_URL`: public HTTPS URL used for verification and password-reset links. Render's `RENDER_EXTERNAL_URL` is used when this is unset.
+- `APP_URL`: canonical public HTTPS URL used for verification and password-reset links. Required on Vercel so links never point at an individual preview deployment; Render can use `RENDER_EXTERNAL_URL` when it is unset.
 - `DATABASE_PATH`: SQLite file path; defaults to `.data/promptos.sqlite`.
 - `DATABASE_URL`: PostgreSQL connection string. Required in production; when set, the server uses PostgreSQL instead of SQLite.
 - `TRUST_PROXY`: set to `true` only when all inbound traffic reaches the service through a trusted reverse proxy that sets `X-Forwarded-For`.
@@ -101,9 +101,10 @@ OPENAI_BASE_URL=https://api.groq.com/openai/v1
 OPENAI_MODEL=<active Groq production model>
 RESEND_API_KEY=<Resend API key>
 EMAIL_FROM=<sender on a verified domain>
+APP_URL=https://your-production-domain.example
 ```
 
-The adapter uses Vercel's HTTPS `VERCEL_URL` for verification links unless `APP_URL` is set. AI and email settings may be added after the initial deployment, but the related features remain unavailable until configured. Resend's `onboarding@resend.dev` sender is only suitable for limited testing to the account owner's address; public signup and password recovery require a verified sending domain. Vercel Hobby, Neon Free, Groq free-tier limits, and Resend quotas or restrictions may change; review each provider's current terms before inviting users or using the app commercially.
+Set `APP_URL` to the canonical production HTTPS site URL in Vercel's Production environment. Production intentionally fails closed if it is missing, rather than generating links to a one-off deployment URL. Preview deployments may use their own HTTPS `VERCEL_URL` when `APP_URL` is absent. AI and email settings may be added after the initial deployment, but the related features remain unavailable until configured. Resend's `onboarding@resend.dev` sender is only suitable for limited testing to the account owner's address; public signup and password recovery require a verified sending domain. Vercel Hobby, Neon Free, Groq free-tier limits, and Resend quotas or restrictions may change; review each provider's current terms before inviting users or using the app commercially.
 
 Before production, set the variables below using the host's secret/environment configuration, build the app, and serve it behind HTTPS:
 
@@ -124,7 +125,7 @@ Generate a high-entropy `SESSION_SECRET` with Node; Render generates it automati
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Account registration is open. Every new account must verify its email before signing in; only the address configured in `ADMIN_EMAIL` receives administrator access. Verify your sending domain in Resend before setting `EMAIL_FROM`; production startup fails closed if AI/email credentials or an HTTPS public URL are missing. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Reset requests use a generic response to avoid disclosing whether an email is registered.
+Account registration is open. Registration collects only email and password; users must accept the Terms of Use and Privacy Policy, with the policy version and acceptance time recorded. Every new account must verify its email before signing in; only the address configured in `ADMIN_EMAIL` receives administrator access. Verify your sending domain in Resend before setting `EMAIL_FROM`; Vercel must have a canonical HTTPS `APP_URL`. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Duplicate registration and reset requests use generic responses to avoid disclosing whether an email is registered. Verification and password-reset emails are limited to three sends per address per hour.
 
 The Render blueprint in `render.yaml` configures a Free web service, HTTPS cookies, and trusted proxy address handling. Neon PostgreSQL stores accounts, sessions, quotas, email tokens, security events, and IP rate limits durably. Database-backed IP limits are atomic across processes that share the database. Only trust proxy headers when direct access to the app is blocked by the trusted ingress. The admin dashboard records metadata, never prompt or response contents; event and usage records are retained for 90 days. Prompt workspaces and local analytics remain in each user's browser and are not synced between devices. Accounts created before email verification was introduced will need to use the verification-resend action once to activate their existing address.
 

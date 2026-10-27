@@ -50,7 +50,9 @@ export async function createPostgresSecurityStore(databaseUrl, sessionSecret) {
         created_at BIGINT NOT NULL,
         role TEXT NOT NULL DEFAULT 'user',
         disabled_at BIGINT,
-        email_verified_at BIGINT
+        email_verified_at BIGINT,
+        terms_accepted_at BIGINT,
+        terms_version TEXT
       );
       CREATE TABLE IF NOT EXISTS sessions (
         token_hash BYTEA PRIMARY KEY,
@@ -98,6 +100,8 @@ export async function createPostgresSecurityStore(databaseUrl, sessionSecret) {
       );
       CREATE INDEX IF NOT EXISTS rate_limits_window_start ON rate_limits(window_start);
     `)
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at BIGINT')
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_version TEXT')
   } catch (error) {
     await pool.end()
     throw error
@@ -144,7 +148,7 @@ export async function createPostgresSecurityStore(databaseUrl, sessionSecret) {
   }
 
   return {
-    async createUser(email, password, requestedRole = 'user', bootstrapFirstAdmin = false) {
+    async createUser(email, password, requestedRole = 'user', bootstrapFirstAdmin = false, termsVersion) {
       const salt = randomBytes(16)
       const passwordHash = await scrypt(password, salt, 64, {
         N: 16_384,
@@ -156,12 +160,12 @@ export async function createPostgresSecurityStore(databaseUrl, sessionSecret) {
       const createdAt = Date.now()
       try {
         const result = await pool.query(
-          `INSERT INTO users (id, email, password_salt, password_hash, created_at, role)
+          `INSERT INTO users (id, email, password_salt, password_hash, created_at, role, terms_accepted_at, terms_version)
            SELECT $1, $2, $3, $4, $5, CASE
              WHEN $6 = 'admin' OR ($7::boolean AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin'))
-             THEN 'admin' ELSE 'user' END
+             THEN 'admin' ELSE 'user' END, $8, $9
            RETURNING id, email, created_at, role, disabled_at, email_verified_at`,
-          [id, email, salt, passwordHash, createdAt, requestedRole, bootstrapFirstAdmin],
+          [id, email, salt, passwordHash, createdAt, requestedRole, bootstrapFirstAdmin, createdAt, termsVersion],
         )
         return userFromRow(result.rows[0])
       } catch (error) {

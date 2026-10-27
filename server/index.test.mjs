@@ -58,6 +58,7 @@ async function startServer(options = {}) {
         body: JSON.stringify({
           email,
           password: 'test-password-at-least-12',
+          acceptedTerms: true,
           ...registration,
         }),
       })
@@ -426,6 +427,7 @@ test('registration requires email verification before a session or AI access is 
     body: JSON.stringify({
       email: 'unverified@example.com',
       password: 'test-password-at-least-12',
+      acceptedTerms: true,
     }),
   })
   const body = await response.json()
@@ -446,6 +448,116 @@ test('registration requires email verification before a session or AI access is 
   assert.match(sentEmails[0].text, /verify=/)
   assert.equal(login.status, 403)
   assert.equal(ai.status, 401)
+})
+
+test('registration validates email, password, and explicit policy acceptance', async () => {
+  const { baseUrl } = await startServer()
+  const register = (body) =>
+    fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+  assert.equal((await register({ email: 'not-an-email', password: 'test-password-at-least-12', acceptedTerms: true })).status, 400)
+  assert.equal((await register({ email: 'valid@example.test', password: 'short', acceptedTerms: true })).status, 400)
+  const missingConsent = await register({ email: 'valid@example.test', password: 'test-password-at-least-12' })
+  assert.equal(missingConsent.status, 400)
+  assert.match((await missingConsent.json()).error, /Terms of Use and Privacy Policy/)
+})
+
+test('duplicate registration does not disclose whether an account exists', async () => {
+  const { baseUrl, register } = await startServer()
+  const first = await register('private@example.test')
+  const duplicate = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'private@example.test',
+      password: 'test-password-at-least-12',
+      acceptedTerms: true,
+    }),
+  })
+
+  assert.equal(first.response.status, 202)
+  assert.equal(duplicate.status, 202)
+  assert.deepEqual(await duplicate.json(), first.registrationBody)
+})
+
+test('verification send failure is explicit, safely logged, and recoverable by resend', async () => {
+  const messages = []
+  const logs = []
+  let sendAttempts = 0
+  const { baseUrl } = await startServer({
+    sendEmail: async (message) => {
+      sendAttempts += 1
+      if (sendAttempts === 1) {
+        const error = new Error('private@example.test token=secret-verification-token')
+        error.code = 'EMAIL_SENDER_DOMAIN_UNVERIFIED'
+        error.providerStatus = 403
+        error.providerCode = 'validation_error'
+        throw error
+      }
+      messages.push(message)
+    },
+    logger: { error: (...args) => logs.push(args) },
+  })
+  const registration = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'private@example.test',
+      password: 'test-password-at-least-12',
+      acceptedTerms: true,
+    }),
+  })
+  const failureBody = await registration.json()
+  const pendingLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'private@example.test', password: 'test-password-at-least-12' }),
+  })
+  const retry = await fetch(`${baseUrl}/api/auth/resend-verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'private@example.test' }),
+  })
+
+  assert.equal(registration.status, 503)
+  assert.equal(failureBody.code, 'EMAIL_SENDER_DOMAIN_UNVERIFIED')
+  assert.match(failureBody.error, /account was created/i)
+  assert.match(failureBody.error, /domain is not verified/i)
+  assert.equal(pendingLogin.status, 403)
+  assert.equal(retry.status, 202)
+  assert.equal(messages.length, 1)
+  assert.equal(logs[0][1].code, 'EMAIL_SENDER_DOMAIN_UNVERIFIED')
+  assert.equal(logs[0][1].providerStatus, 403)
+  assert.doesNotMatch(JSON.stringify(logs), /private@example\.test|secret-verification-token/)
+
+  const verificationUrl = new URL(messages[0].text.match(/https?:\/\/\S+/)[0])
+  const verified = await fetch(`${baseUrl}/api/auth/verify-email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: verificationUrl.searchParams.get('verify') }),
+  })
+  assert.equal(verified.status, 200)
+})
+
+test('verification email requests are rate limited per email address', async () => {
+  const { baseUrl, register } = await startServer()
+  await register('limited@example.test')
+  const resend = () =>
+    fetch(`${baseUrl}/api/auth/resend-verification`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'limited@example.test' }),
+    })
+
+  assert.equal((await resend()).status, 202)
+  assert.equal((await resend()).status, 202)
+  const limited = await resend()
+  assert.equal(limited.status, 429)
+  assert.match((await limited.json()).error, /Too many email requests/)
 })
 
 test('email verification tokens are single-use and reset password revokes prior sessions', async () => {
@@ -549,6 +661,26 @@ test('existing databases gain the email-verification field without dropping acco
   const store = createSecurityStore(databasePath, 'migration-test-secret-that-is-at-least-32-bytes')
   assert.equal(store.getUserById('legacy-user').email, 'legacy@example.test')
   assert.equal(store.getUserById('legacy-user').email_verified_at, null)
+  const legacy = store.getUserByEmail('legacy@example.test')
+  assert.equal(legacy.terms_accepted_at, null)
+  assert.equal(legacy.terms_version, null)
+  store.close()
+})
+
+test('new accounts persist the accepted terms version and timestamp', async () => {
+  const store = createSecurityStore(':memory:', 'terms-test-secret-that-is-at-least-32-bytes')
+  const user = await store.createUser(
+    'accepted@example.test',
+    'test-password-at-least-12',
+    'user',
+    false,
+    '2026-10-27',
+  )
+  const saved = store.getUserByEmail('accepted@example.test')
+
+  assert.equal(saved.id, user.id)
+  assert.equal(saved.terms_version, '2026-10-27')
+  assert.ok(Number.isInteger(saved.terms_accepted_at))
   store.close()
 })
 
@@ -582,7 +714,31 @@ test('Resend email sender keeps HTML safe and does not expose provider response 
     failingSender({ to: 'member@example.test', subject: 'Verify', text: 'Body' }),
     (error) => {
       assert.match(error.message, /HTTP 401/)
+      assert.equal(error.code, 'EMAIL_PROVIDER_AUTH_FAILED')
       assert.doesNotMatch(error.message, /provider secret diagnostic/)
+      return true
+    },
+  )
+
+  const restrictedSender = createResendEmailSender({
+    apiKey: 'resend-test-secret',
+    from: 'PromptOS <accounts@example.test>',
+    fetchImpl: async () => new Response(JSON.stringify({
+      name: 'validation_error',
+      message: 'Testing domain restriction: verify a domain and update from address.',
+    }), {
+      status: 403,
+      headers: { 'content-type': 'application/json', 'x-resend-id': 'safe-provider-request-id' },
+    }),
+  })
+  await assert.rejects(
+    restrictedSender({ to: 'member@example.test', subject: 'Verify', text: 'Body' }),
+    (error) => {
+      assert.equal(error.code, 'EMAIL_SENDER_DOMAIN_UNVERIFIED')
+      assert.equal(error.providerStatus, 403)
+      assert.equal(error.providerCode, 'validation_error')
+      assert.equal(error.providerRequestId, 'safe-provider-request-id')
+      assert.doesNotMatch(error.message, /verify a domain/)
       return true
     },
   )

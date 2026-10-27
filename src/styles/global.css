@@ -491,6 +491,16 @@ input:focus, textarea:focus, select:focus { border-color: #52628b; }
 .auth-form .field { margin-bottom: 16px; }
 .auth-form .field > span { font-size: 12px; }
 .auth-form input { min-height: 44px; border-radius: 8px; }
+.auth-consent { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 14px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.auth-consent input { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; margin: 1px 0 0; padding: 0; accent-color: var(--accent); }
+.auth-consent a, .legal-card a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px; }
+.legal-card { width: min(680px, 100%); padding: clamp(24px, 5vw, 42px); border: 1px solid var(--border); border-radius: 15px; background: linear-gradient(150deg, rgba(21, 25, 35, .98), rgba(16, 19, 26, .98)); box-shadow: 0 20px 56px rgba(0, 0, 0, .24); }
+.legal-back { display: inline-block; margin-bottom: 28px; color: var(--muted); font-size: 12px; }
+.legal-card h1 { margin: 0; font-size: clamp(28px, 6vw, 36px); letter-spacing: -.04em; }
+.legal-card h2 { margin: 27px 0 8px; font-size: 15px; }
+.legal-card p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.legal-card .eyebrow { margin-bottom: 8px; font-size: 9px; letter-spacing: .15em; }
+.legal-card .legal-updated { margin-top: 8px; color: var(--faint); font-size: 11px; }
 .auth-submit { width: 100%; min-height: 44px; margin-top: 4px; font-size: 12px; }
 .auth-form > .auth-switch { justify-self: center; margin-top: 12px; }
 .auth-switch {
@@ -522,6 +532,7 @@ input:focus, textarea:focus, select:focus { border-color: #52628b; }
   .evaluation-columns { grid-template-columns: 1fr; }
   .auth-page { padding: 16px; }
   .auth-card { padding: 24px; }
+  .legal-card { padding: 24px; }
   .auth-brand { margin-bottom: 24px; }
 }
 @media (max-width: 980px) {

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  AuthRequestError,
   registerAccount,
   requestPasswordReset,
   resendVerification,
@@ -22,6 +23,8 @@ export function AuthPage() {
   )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [pendingEmail, setPendingEmail] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -45,9 +48,10 @@ export function AuthPage() {
         await authenticate(email, password)
         navigate('/workspace', { replace: true })
       } else if (mode === 'register') {
-        const result = await registerAccount(email, password)
+        const result = await registerAccount(email, password, acceptedTerms)
+        setPendingEmail(email)
         setSuccess(result.message ?? 'Check your email to verify your account.')
-        setMode('login')
+        setMode('verify')
       } else if (mode === 'forgot') {
         const result = await requestPasswordReset(email)
         setSuccess(result.message ?? 'If an account exists, reset instructions will be sent.')
@@ -68,6 +72,10 @@ export function AuthPage() {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not complete this account request.')
+      if (mode === 'register' && cause instanceof AuthRequestError && cause.code) {
+        setPendingEmail(email)
+        setMode('verify')
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -99,7 +107,9 @@ export function AuthPage() {
     register: 'Create your account to start building and evaluating prompts. Verify your email before signing in.',
     forgot: 'Enter your account email. If it is registered, we will send a reset link.',
     reset: 'Choose a new password with at least 12 characters.',
-    verify: 'Confirm your email address to activate your PromptOS account.',
+    verify: verificationToken
+      ? 'Confirm your email address to activate your PromptOS account.'
+      : 'Your account cannot be used until its email is verified. Request a verification link below.',
   }[mode]
 
   return (
@@ -117,11 +127,11 @@ export function AuthPage() {
         {mode === 'reset' && !resetToken && (
           <div className="alert error" role="alert">This password reset link is missing. Request a new link below.</div>
         )}
-        {mode === 'verify' && !verificationToken && (
-          <div className="alert error" role="alert">This verification link is missing. Request a new verification email.</div>
+        {mode === 'verify' && !verificationToken && !pendingEmail && (
+          <div className="alert error" role="alert">This verification link is missing. Return to registration or sign in to request a new link.</div>
         )}
         <form className="auth-form" onSubmit={submit}>
-          {(mode === 'login' || mode === 'register' || mode === 'forgot') && (
+          {(mode === 'login' || mode === 'register' || mode === 'forgot' || (mode === 'verify' && !verificationToken)) && (
             <label className="field">
               <span>Email</span>
               <input type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -141,8 +151,22 @@ export function AuthPage() {
               />
             </label>
           )}
+          {mode === 'register' && (
+            <label className="auth-consent">
+              <input
+                type="checkbox"
+                required
+                checked={acceptedTerms}
+                onChange={(event) => setAcceptedTerms(event.target.checked)}
+              />
+              <span>
+                I agree to the <Link to="/terms">Terms of Use</Link> and <Link to="/privacy">Privacy Policy</Link>.
+              </span>
+            </label>
+          )}
           {error && <div className="alert error" role="alert">{error}</div>}
-          <button className="button primary auth-submit" type="submit" disabled={isSubmitting || !!serverError || (mode === 'reset' && !resetToken) || (mode === 'verify' && !verificationToken)}>
+          {mode !== 'verify' || verificationToken ? (
+            <button className="button primary auth-submit" type="submit" disabled={isSubmitting || !!serverError || (mode === 'reset' && !resetToken)}>
             {isSubmitting ? 'Please wait…' : {
               login: 'Sign in',
               register: 'Create account',
@@ -150,9 +174,13 @@ export function AuthPage() {
               reset: 'Update password',
               verify: 'Confirm email',
             }[mode]}
-          </button>
-          {((mode === 'login' && /verify your email/i.test(error)) ||
-            (mode === 'register' && /account was created/i.test(error))) && (
+            </button>
+          ) : (
+            <button className="button primary auth-submit" type="button" onClick={() => void sendVerificationAgain()} disabled={isSubmitting || !!serverError || !email}>
+              {isSubmitting ? 'Please wait…' : 'Resend verification email'}
+            </button>
+          )}
+          {mode === 'login' && /verify your email/i.test(error) && (
             <button className="auth-switch" type="button" onClick={() => void sendVerificationAgain()} disabled={isSubmitting}>
               Resend verification email
             </button>

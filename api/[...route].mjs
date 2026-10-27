@@ -6,14 +6,16 @@ function runtimeConfig() {
   const appUrl =
     process.env.APP_URL ||
     process.env.RENDER_EXTERNAL_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
+    (process.env.VERCEL_ENV !== 'production' && process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : undefined)
 
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.')
   if (!process.env.SESSION_SECRET || Buffer.byteLength(process.env.SESSION_SECRET) < 32) {
     throw new Error('SESSION_SECRET must contain at least 32 bytes.')
   }
   if (!process.env.ADMIN_EMAIL) throw new Error('ADMIN_EMAIL is required.')
-  if (!appUrl || new URL(appUrl).protocol !== 'https:') throw new Error('APP_URL must use HTTPS.')
+  if (!appUrl || new URL(appUrl).protocol !== 'https:') throw new Error('APP_URL must be set to the canonical public HTTPS URL.')
 
   return {
     apiKey: process.env.OPENAI_API_KEY ?? '',

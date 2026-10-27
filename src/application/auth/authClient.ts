@@ -39,6 +39,13 @@ export type AdminOverview = {
   }>
 }
 
+export class AuthRequestError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message)
+    this.name = 'AuthRequestError'
+  }
+}
+
 async function authRequest(path: string, body?: unknown): Promise<AuthSession | null> {
   let response: Response
   try {
@@ -70,7 +77,10 @@ async function authRequest(path: string, body?: unknown): Promise<AuthSession | 
       value && typeof value === 'object' && 'error' in value && typeof value.error === 'string'
         ? value.error
         : `Account request failed with HTTP ${response.status}.`
-    throw new Error(message)
+    const code = value && typeof value === 'object' && 'code' in value && typeof value.code === 'string'
+      ? value.code
+      : undefined
+    throw new AuthRequestError(message, code)
   }
   if (path === '/api/auth/logout') return null
   return value as AuthSession
@@ -102,7 +112,10 @@ async function accountAction(path: string, body: unknown): Promise<{ message?: s
       value && typeof value === 'object' && 'error' in value && typeof value.error === 'string'
         ? value.error
         : `Account request failed with HTTP ${response.status}.`
-    throw new Error(message)
+    const code = value && typeof value === 'object' && 'code' in value && typeof value.code === 'string'
+      ? value.code
+      : undefined
+    throw new AuthRequestError(message, code)
   }
   return value as { message?: string }
 }
@@ -115,8 +128,8 @@ export function signIn(email: string, password: string) {
   return authRequest('/api/auth/login', { email, password })
 }
 
-export function registerAccount(email: string, password: string) {
-  return accountAction('/api/auth/register', { email, password })
+export function registerAccount(email: string, password: string, acceptedTerms: boolean) {
+  return accountAction('/api/auth/register', { email, password, acceptedTerms })
 }
 
 export function verifyEmail(token: string) {

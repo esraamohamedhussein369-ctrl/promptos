@@ -33,7 +33,9 @@ export function createSecurityStore(databasePath, sessionSecret) {
       created_at INTEGER NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       disabled_at INTEGER,
-      email_verified_at INTEGER
+      email_verified_at INTEGER,
+      terms_accepted_at INTEGER,
+      terms_version TEXT
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash BLOB PRIMARY KEY,
@@ -84,6 +86,12 @@ export function createSecurityStore(databasePath, sessionSecret) {
   const userColumns = new Set(database.pragma('table_info(users)').map((column) => column.name))
   if (!userColumns.has('email_verified_at')) {
     database.exec('ALTER TABLE users ADD COLUMN email_verified_at INTEGER')
+  }
+  if (!userColumns.has('terms_accepted_at')) {
+    database.exec('ALTER TABLE users ADD COLUMN terms_accepted_at INTEGER')
+  }
+  if (!userColumns.has('terms_version')) {
+    database.exec('ALTER TABLE users ADD COLUMN terms_version TEXT')
   }
 
   const statements = {
@@ -169,7 +177,7 @@ export function createSecurityStore(databasePath, sessionSecret) {
   }
 
   return {
-    async createUser(email, password, requestedRole = 'user', bootstrapFirstAdmin = false) {
+    async createUser(email, password, requestedRole = 'user', bootstrapFirstAdmin = false, termsVersion) {
       const salt = randomBytes(16)
       const passwordHash = await scrypt(password, salt, 64, {
         N: 16_384,
@@ -181,11 +189,21 @@ export function createSecurityStore(databasePath, sessionSecret) {
       const createdAt = Date.now()
       try {
         database.prepare(
-          `INSERT INTO users (id, email, password_salt, password_hash, created_at, role)
+          `INSERT INTO users (id, email, password_salt, password_hash, created_at, role, terms_accepted_at, terms_version)
            SELECT ?, ?, ?, ?, ?, CASE
              WHEN ? = 'admin' OR (? = 1 AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin'))
-             THEN 'admin' ELSE 'user' END`,
-        ).run(id, email, salt, passwordHash, createdAt, requestedRole, bootstrapFirstAdmin ? 1 : 0)
+             THEN 'admin' ELSE 'user' END, ?, ?`,
+        ).run(
+          id,
+          email,
+          salt,
+          passwordHash,
+          createdAt,
+          requestedRole,
+          bootstrapFirstAdmin ? 1 : 0,
+          createdAt,
+          termsVersion,
+        )
       } catch (error) {
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return null
         throw error

@@ -19,6 +19,8 @@ const maxBodyBytes = 160_000
 const rateLimitWindowMs = 60_000
 const rateLimitRequests = 30
 const sessionLifetimeSeconds = 7 * 24 * 60 * 60
+const termsVersion = '2026-10-27'
+const registrationMessage = 'If this address can be registered, check your inbox for a verification link. If you already have an account, sign in or reset your password.'
 
 const mimeTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -342,6 +344,38 @@ export async function createPromptOsServer({
       windowMs,
       limit,
     })
+  const allowEmailDelivery = (email) =>
+    securityStore.consumeRateLimit({
+      scope: 'account_email_delivery',
+      address: email,
+      windowMs: 60 * 60_000,
+      limit: 3,
+    })
+  const logEmailFailure = (message, error) => {
+    const details = {
+      code: typeof error?.code === 'string' ? error.code : 'EMAIL_DELIVERY_FAILED',
+      providerStatus: Number.isInteger(error?.providerStatus) ? error.providerStatus : null,
+      providerCode: typeof error?.providerCode === 'string' ? error.providerCode : null,
+      providerRequestId: typeof error?.providerRequestId === 'string' ? error.providerRequestId : null,
+    }
+    logger.error(message, details)
+    return details
+  }
+  const emailFailureMessage = (code) => {
+    if (code === 'EMAIL_SENDER_DOMAIN_UNVERIFIED') {
+      return 'Email delivery is not available because the sender domain is not verified. Your account remains unverified; please try again after the site owner verifies the domain.'
+    }
+    if (code === 'EMAIL_PROVIDER_AUTH_FAILED' || code === 'EMAIL_NOT_CONFIGURED') {
+      return 'Email delivery is not configured correctly. Your account remains unverified; please try again later.'
+    }
+    if (code === 'EMAIL_PROVIDER_RATE_LIMITED') {
+      return 'The email service is temporarily rate-limiting requests. Your account remains unverified; please try again later.'
+    }
+    if (code === 'EMAIL_PROVIDER_UNREACHABLE') {
+      return 'The email service is temporarily unavailable. Your account remains unverified; please try again later.'
+    }
+    return 'The verification email could not be sent. Your account remains unverified; please try again later.'
+  }
   const addressOf = clientAddress
   const makeEmailAction = ({ action, token }) => {
     const link = new URL('/login', appUrl)
@@ -480,10 +514,17 @@ export async function createPromptOsServer({
             error.status = 400
             throw error
           }
-          const user = await securityStore.getUserByEmail(email)
           const isReset = url.pathname === '/api/auth/forgot-password'
+          const withinEmailLimit = await allowEmailDelivery(email)
+          if (!withinEmailLimit && !isReset) {
+            sendJson(response, 429, { error: 'Too many email requests. Please wait before requesting another message.' })
+            return
+          }
+          const user = await securityStore.getUserByEmail(email)
           const shouldSend = user && !user.disabled_at &&
-            (isReset ? Boolean(user.email_verified_at) : !user.email_verified_at)
+            (isReset ? Boolean(user.email_verified_at) : !user.email_verified_at) &&
+            withinEmailLimit
+          let deliveryError = null
           if (shouldSend) {
             const purpose = isReset ? 'reset_password' : 'verify_email'
             const lifetime = isReset ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000
@@ -498,9 +539,12 @@ export async function createPromptOsServer({
                   : `Verify your email to access PromptOS:\n\n${makeEmailAction({ action, token })}\n\nThis link expires in 24 hours. If you did not create this account, ignore this email.`,
               })
             } catch (error) {
-              logger.error('PromptOS could not send an account email.', error)
+              deliveryError = logEmailFailure('PromptOS could not send an account email.', error)
               if (url.pathname === '/api/auth/resend-verification') {
-                sendJson(response, 503, { error: 'Could not send the verification email. Try again later.' })
+                sendJson(response, 503, {
+                  code: deliveryError.code,
+                  error: emailFailureMessage(deliveryError.code),
+                })
                 return
               }
             }
@@ -552,27 +596,40 @@ export async function createPromptOsServer({
         }
 
         if (url.pathname === '/api/auth/register') {
+          if (body?.acceptedTerms !== true) {
+            const error = new Error('You must agree to the Terms of Use and Privacy Policy to create an account.')
+            error.status = 400
+            throw error
+          }
+          if (!await allowEmailDelivery(email)) {
+            sendJson(response, 429, { error: 'Too many email requests. Please wait before trying again.' })
+            return
+          }
           const isConfiguredAdmin = Boolean(adminEmail && email === adminEmail)
           const created = await securityStore.createUser(
             email,
             password,
             isConfiguredAdmin ? 'admin' : 'user',
             !adminEmail,
+            termsVersion,
           )
           if (!created) {
             await recordEvent(request, 'signup', 'duplicate_account')
-            sendJson(response, 409, { error: 'An account with that email already exists.' })
+            sendJson(response, 202, { message: registrationMessage })
             return
           }
           await recordEvent(request, 'signup', 'pending_verification', created.id)
           try {
             await sendVerificationEmail(created)
           } catch (error) {
-            logger.error('PromptOS could not send a verification email.', error)
-            sendJson(response, 503, { error: 'Your account was created, but the verification email could not be sent. Use Resend verification to try again.' })
+            const details = logEmailFailure('PromptOS could not send a verification email.', error)
+            sendJson(response, 503, {
+              code: details.code,
+              error: `Your account was created, but the verification email could not be sent. ${emailFailureMessage(details.code)} Use Resend verification to try again.`,
+            })
             return
           }
-          sendJson(response, 202, { message: 'Account created. Check your email for a verification link before signing in.' })
+          sendJson(response, 202, { message: registrationMessage })
           return
         }
 
