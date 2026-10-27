@@ -169,7 +169,7 @@ export function AuthPage() {
           {mode === 'login' && (
             <>
               <button className="auth-switch" onClick={() => { setMode('forgot'); setError(''); setSuccess('') }}>Forgot your password?</button>
-              <button className="auth-switch" onClick={() => { setMode('register'); setError(''); setSuccess('') }}>Have an invitation? Create an account</button>
+              <button className="auth-switch" onClick={() => { setMode('register'); setError(''); setSuccess('') }}>Create an account</button>
             </>
           )}
           {mode === 'register' && <button className="auth-switch" onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Already registered? Sign in</button>}
