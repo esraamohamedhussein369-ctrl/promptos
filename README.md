@@ -27,7 +27,7 @@ The backend supports OpenAI Chat Completions and other providers that implement 
 - `SESSION_SECRET`: random secret, at least 32 bytes, used to protect session tokens, hash client IPs, and derive stored rate-limit keys.
 - `ADMIN_EMAIL`: email address assigned the administrator role at registration. In production this is required; all accounts must verify their email before signing in.
 - `AI_DAILY_LIMIT`: maximum AI runs and evaluations combined per account per UTC day, default `20`.
-- `RESEND_API_KEY` and `EMAIL_FROM`: Resend API credential and sender address on a domain verified with Resend.
+- `BREVO_API_KEY` (recommended) or `RESEND_API_KEY`, plus `EMAIL_FROM`: transactional email provider credential and sender address. Brevo can verify an individual sender by sending a code to that mailbox; Resend requires a verified sending domain for general recipients.
 - `APP_URL`: canonical public HTTPS URL used for verification and password-reset links. Required on Vercel so links never point at an individual preview deployment; Render can use `RENDER_EXTERNAL_URL` when it is unset.
 - `DATABASE_PATH`: SQLite file path; defaults to `.data/promptos.sqlite`.
 - `DATABASE_URL`: PostgreSQL connection string. Required in production; when set, the server uses PostgreSQL instead of SQLite.
@@ -99,12 +99,12 @@ ADMIN_EMAIL=<administrator email>
 OPENAI_API_KEY=<provider key>
 OPENAI_BASE_URL=https://api.groq.com/openai/v1
 OPENAI_MODEL=<active Groq production model>
-RESEND_API_KEY=<Resend API key>
-EMAIL_FROM=<sender on a verified domain>
+BREVO_API_KEY=<Brevo API key>
+EMAIL_FROM=<sender email verified in Brevo, e.g. your Gmail address>
 APP_URL=https://your-production-domain.example
 ```
 
-Set `APP_URL` to the canonical production HTTPS site URL in Vercel's Production environment. Production intentionally fails closed if it is missing, rather than generating links to a one-off deployment URL. Preview deployments may use their own HTTPS `VERCEL_URL` when `APP_URL` is absent. AI and email settings may be added after the initial deployment, but the related features remain unavailable until configured. Resend's `onboarding@resend.dev` sender is only suitable for limited testing to the account owner's address; public signup and password recovery require a verified sending domain. Vercel Hobby, Neon Free, Groq free-tier limits, and Resend quotas or restrictions may change; review each provider's current terms before inviting users or using the app commercially.
+For a no-domain email setup, create a free Brevo account, add your existing mailbox under **Settings → Senders, Domains, IPs → Senders**, and enter the verification code Brevo emails to that mailbox. Configure its API key as `BREVO_API_KEY` and that exact verified address as `EMAIL_FROM` in Vercel. Brevo's current free plan lists 300 emails per day; plan limits and sender policies can change. See [Brevo sender setup](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email) and [transactional email API](https://developers.brevo.com/docs/send-a-transactional-email). The server uses Brevo when both providers are configured; otherwise it falls back to Resend. Set `APP_URL` to the canonical production HTTPS site URL in Vercel's Production environment. Production intentionally fails closed if it is missing, rather than generating links to a one-off deployment URL. Preview deployments may use their own HTTPS `VERCEL_URL` when `APP_URL` is absent. Vercel Hobby, Neon Free, Groq free-tier limits, and provider quotas or restrictions may change; review current terms before inviting users or using the app commercially.
 
 Before production, set the variables below using the host's secret/environment configuration, build the app, and serve it behind HTTPS:
 
@@ -115,8 +115,8 @@ SESSION_SECRET=<random value at least 32 bytes>
 ADMIN_EMAIL=<administrator email>
 AI_DAILY_LIMIT=20
 OPENAI_API_KEY=<provider key>
-RESEND_API_KEY=<Resend API key>
-EMAIL_FROM=<sender on your verified Resend domain>
+BREVO_API_KEY=<Brevo API key>
+EMAIL_FROM=<sender email verified in Brevo>
 ```
 
 Generate a high-entropy `SESSION_SECRET` with Node; Render generates it automatically:
@@ -125,7 +125,7 @@ Generate a high-entropy `SESSION_SECRET` with Node; Render generates it automati
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Account registration is open. Registration collects only email and password; users must accept the Terms of Use and Privacy Policy, with the policy version and acceptance time recorded. Every new account must verify its email before signing in; only the address configured in `ADMIN_EMAIL` receives administrator access. Verify your sending domain in Resend before setting `EMAIL_FROM`; Vercel must have a canonical HTTPS `APP_URL`. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Duplicate registration and reset requests use generic responses to avoid disclosing whether an email is registered. Verification and password-reset emails are limited to three sends per address per hour.
+Account registration is open. Registration collects only email and password; users must accept the Terms of Use and Privacy Policy, with the policy version and acceptance time recorded. Every new account must verify its email before signing in; only the address configured in `ADMIN_EMAIL` receives administrator access. Set `EMAIL_FROM` to a sender verified in Brevo (or use a verified Resend domain); Vercel must have a canonical HTTPS `APP_URL`. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Duplicate registration and reset requests use generic responses to avoid disclosing whether an email is registered. Verification and password-reset emails are limited to three sends per address per hour.
 
 The Render blueprint in `render.yaml` configures a Free web service, HTTPS cookies, and trusted proxy address handling. Neon PostgreSQL stores accounts, sessions, quotas, email tokens, security events, and IP rate limits durably. Database-backed IP limits are atomic across processes that share the database. Only trust proxy headers when direct access to the app is blocked by the trusted ingress. The admin dashboard records metadata, never prompt or response contents; event and usage records are retained for 90 days. Prompt workspaces and local analytics remain in each user's browser and are not synced between devices. Accounts created before email verification was introduced will need to use the verification-resend action once to activate their existing address.
 
@@ -133,8 +133,8 @@ For Render deployment:
 
 1. Create a Neon project on its Free plan and copy its pooled PostgreSQL connection string. Keep the connection string private.
 2. Create a Render Blueprint from the GitHub repository; Render reads `render.yaml`. Select the Free web-service plan.
-3. Set `DATABASE_URL` to the Neon connection string, and enter `ADMIN_EMAIL`, `OPENAI_API_KEY`, `RESEND_API_KEY`, and `EMAIL_FROM` in Render's protected environment settings. Do not put credentials in Git.
-4. Verify the `EMAIL_FROM` domain with Resend; production startup fails closed if the database, AI/email credentials, security settings, or HTTPS public URL are missing. Render's generated public HTTPS URL is used for email links unless `APP_URL` is explicitly configured.
+3. Set `DATABASE_URL` to the Neon connection string, and enter `ADMIN_EMAIL`, `OPENAI_API_KEY`, either `BREVO_API_KEY` or `RESEND_API_KEY`, and `EMAIL_FROM` in Render's protected environment settings. Do not put credentials in Git.
+4. Verify the sender address in Brevo or the sender domain in Resend; production startup fails closed if the database, AI/email credentials, security settings, or HTTPS public URL are missing. Render's generated public HTTPS URL is used for email links unless `APP_URL` is explicitly configured.
 5. Keep `SESSION_SECRET` and provider credentials private, and periodically back up important account data.
 6. Free hosting does not make AI usage or a verified email-sending domain free by itself. Check the current quotas and pricing of Neon, Render, your AI provider, and Resend before inviting users.
 

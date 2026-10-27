@@ -26,6 +26,7 @@ function runtimeConfig() {
     sessionSecret: process.env.SESSION_SECRET,
     adminEmail: process.env.ADMIN_EMAIL,
     appUrl,
+    brevoApiKey: process.env.BREVO_API_KEY,
     resendApiKey: process.env.RESEND_API_KEY,
     emailFrom: process.env.EMAIL_FROM,
     dailyLimit: Number(process.env.AI_DAILY_LIMIT) || undefined,

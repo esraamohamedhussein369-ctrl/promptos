@@ -11,7 +11,7 @@ import {
   sessionCookieName,
 } from './securityStore.mjs'
 import { createPostgresSecurityStore } from './postgresSecurityStore.mjs'
-import { createResendEmailSender } from './email.mjs'
+import { createBrevoEmailSender, createResendEmailSender } from './email.mjs'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const defaultBaseUrl = 'https://api.openai.com/v1'
@@ -315,12 +315,15 @@ export async function createPromptOsServer({
     : 20
   const adminEmail = typeof config.adminEmail === 'string' ? config.adminEmail.trim().toLowerCase() : ''
   const appUrl = config.appUrl ?? process.env.RENDER_EXTERNAL_URL ?? `http://127.0.0.1:${process.env.PORT || 3000}`
-  const emailSender =
-    sendEmail ??
-    createResendEmailSender({
-      apiKey: config.resendApiKey ?? '',
-      from: config.emailFrom ?? '',
-    })
+  const emailSender = sendEmail ?? (config.brevoApiKey
+    ? createBrevoEmailSender({
+        apiKey: config.brevoApiKey,
+        from: config.emailFrom ?? '',
+      })
+    : createResendEmailSender({
+        apiKey: config.resendApiKey ?? '',
+        from: config.emailFrom ?? '',
+      }))
   const secureCookies = config.secureCookies ?? process.env.NODE_ENV === 'production'
   const trustProxy = config.trustProxy === true
   const securityStore = databaseUrl
@@ -813,8 +816,8 @@ async function start() {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('Set OPENAI_API_KEY in the production environment before starting PromptOS.')
     }
-    if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
-      throw new Error('Set RESEND_API_KEY and EMAIL_FROM to enable account verification and password recovery.')
+    if ((!process.env.BREVO_API_KEY && !process.env.RESEND_API_KEY) || !process.env.EMAIL_FROM) {
+      throw new Error('Set BREVO_API_KEY (recommended) or RESEND_API_KEY, plus EMAIL_FROM, to enable account verification and password recovery.')
     }
     const publicUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL
     if (!publicUrl || new URL(publicUrl).protocol !== 'https:') {
@@ -824,7 +827,8 @@ async function start() {
   if (useVite) {
     process.env.SESSION_SECRET ||= randomBytes(32).toString('hex')
   }
-  const useDevelopmentEmail = useVite && (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
+  const useDevelopmentEmail = useVite &&
+    ((!process.env.BREVO_API_KEY && !process.env.RESEND_API_KEY) || !process.env.EMAIL_FROM)
   const sendEmail = useDevelopmentEmail
     ? async ({ to, subject, text }) => {
         console.info('PromptOS development email (local only).', { to, subject, text })
@@ -840,6 +844,7 @@ async function start() {
       sessionSecret: process.env.SESSION_SECRET,
       adminEmail: process.env.ADMIN_EMAIL,
       appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${process.env.PORT || 3000}`,
+      brevoApiKey: process.env.BREVO_API_KEY,
       resendApiKey: process.env.RESEND_API_KEY,
       emailFrom: process.env.EMAIL_FROM,
       dailyLimit: Number(process.env.AI_DAILY_LIMIT) || undefined,

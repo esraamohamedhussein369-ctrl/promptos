@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
 import Database from 'better-sqlite3'
 import { createPromptOsServer } from './index.mjs'
-import { createResendEmailSender } from './email.mjs'
+import { createBrevoEmailSender, createResendEmailSender } from './email.mjs'
 import { createSecurityStore } from './securityStore.mjs'
 import vercelHandler from '../api/[...route].mjs'
 
@@ -739,6 +739,61 @@ test('Resend email sender keeps HTML safe and does not expose provider response 
       assert.equal(error.providerCode, 'validation_error')
       assert.equal(error.providerRequestId, 'safe-provider-request-id')
       assert.doesNotMatch(error.message, /verify a domain/)
+      return true
+    },
+  )
+})
+
+test('Brevo sender uses the verified mailbox and keeps API credentials server-side', async () => {
+  let request
+  const sender = createBrevoEmailSender({
+    apiKey: 'brevo-test-secret',
+    from: 'owner@example.test',
+    fetchImpl: async (url, options) => {
+      request = { url, options, body: JSON.parse(options.body) }
+      return new Response(JSON.stringify({ messageId: '<message@example.test>' }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await sender({
+    to: 'recipient@example.test',
+    subject: 'Verify',
+    text: 'Click <script>alert(1)</script>\nhttps://promptos.example.test/login?verify=token',
+  })
+
+  assert.equal(request.url, 'https://api.brevo.com/v3/smtp/email')
+  assert.equal(request.options.headers['api-key'], 'brevo-test-secret')
+  assert.equal(request.body.sender.name, 'PromptOS')
+  assert.equal(request.body.sender.email, 'owner@example.test')
+  assert.deepEqual(request.body.to, [{ email: 'recipient@example.test' }])
+  assert.match(request.body.htmlContent, /&lt;script&gt;/)
+  assert.doesNotMatch(request.body.htmlContent, /<script>/)
+  assert.equal(JSON.stringify(request.body).includes('brevo-test-secret'), false)
+})
+
+test('Brevo sender returns a safe diagnostic when its sender has not been verified', async () => {
+  const sender = createBrevoEmailSender({
+    apiKey: 'brevo-test-secret',
+    from: 'owner@example.test',
+    fetchImpl: async () => new Response(JSON.stringify({
+      code: 'sender_not_verified',
+      message: 'Sender must be verified before sending.',
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json', 'x-sib-request-id': 'brevo-safe-request-id' },
+    }),
+  })
+
+  await assert.rejects(
+    sender({ to: 'recipient@example.test', subject: 'Verify', text: 'Body' }),
+    (error) => {
+      assert.equal(error.code, 'EMAIL_SENDER_DOMAIN_UNVERIFIED')
+      assert.equal(error.providerStatus, 400)
+      assert.equal(error.providerRequestId, 'brevo-safe-request-id')
+      assert.doesNotMatch(error.message, /Sender must be verified/)
       return true
     },
   )
