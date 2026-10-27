@@ -23,7 +23,6 @@ export function AuthPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
-  const [adminSetupCode, setAdminSetupCode] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -47,7 +46,7 @@ export function AuthPage() {
         await authenticate(email, password)
         navigate('/workspace', { replace: true })
       } else if (mode === 'register') {
-        const result = await registerAccount(email, password, inviteCode, adminSetupCode)
+        const result = await registerAccount(email, password, inviteCode)
         setSuccess(result.message ?? 'Check your email to verify your account.')
         setMode('login')
       } else if (mode === 'forgot') {
@@ -98,7 +97,7 @@ export function AuthPage() {
   }[mode]
   const description = {
     login: 'Sign in to access your prompts and AI tools.',
-    register: 'PromptOS accounts are invitation-only. Verify your email before signing in.',
+    register: 'Use your configured administrator email without an invitation code. Other accounts need a code from the owner. Verify your email before signing in.',
     forgot: 'Enter your account email. If it is registered, we will send a reset link.',
     reset: 'Choose a new password with at least 12 characters.',
     verify: 'Confirm your email address to activate your PromptOS account.',
@@ -125,14 +124,8 @@ export function AuthPage() {
         <form className="auth-form" onSubmit={submit}>
           {mode === 'register' && (
             <label className="field">
-              <span>Invitation code</span>
-              <input autoComplete="one-time-code" required value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
-            </label>
-          )}
-          {mode === 'register' && (
-            <label className="field">
-              <span>Administrator setup code <small>Only for the configured administrator</small></span>
-              <input autoComplete="off" value={adminSetupCode} onChange={(event) => setAdminSetupCode(event.target.value)} />
+              <span>Invitation code <small>Not needed for the configured administrator email</small></span>
+              <input autoComplete="one-time-code" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
             </label>
           )}
           {(mode === 'login' || mode === 'register' || mode === 'forgot') && (

@@ -15,9 +15,6 @@ function runtimeConfig() {
   if (!process.env.SIGNUP_INVITE_CODE || Buffer.byteLength(process.env.SIGNUP_INVITE_CODE) < 12) {
     throw new Error('SIGNUP_INVITE_CODE must contain at least 12 bytes.')
   }
-  if (!process.env.ADMIN_SETUP_CODE || Buffer.byteLength(process.env.ADMIN_SETUP_CODE) < 12) {
-    throw new Error('ADMIN_SETUP_CODE must contain at least 12 bytes.')
-  }
   if (!process.env.ADMIN_EMAIL) throw new Error('ADMIN_EMAIL is required.')
   if (!appUrl || new URL(appUrl).protocol !== 'https:') throw new Error('APP_URL must use HTTPS.')
 
@@ -29,7 +26,6 @@ function runtimeConfig() {
     timeoutMs: Number(process.env.AI_TIMEOUT_MS) || undefined,
     sessionSecret: process.env.SESSION_SECRET,
     inviteCode: process.env.SIGNUP_INVITE_CODE,
-    adminInviteCode: process.env.ADMIN_SETUP_CODE,
     adminEmail: process.env.ADMIN_EMAIL,
     appUrl,
     resendApiKey: process.env.RESEND_API_KEY,

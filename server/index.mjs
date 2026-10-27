@@ -306,21 +306,14 @@ export async function createPromptOsServer({
   }
   const sessionSecret = config.sessionSecret ?? randomBytes(32).toString('hex')
   const inviteCode = config.inviteCode ?? randomBytes(24).toString('base64url')
-  const adminInviteCode = config.adminInviteCode ?? randomBytes(24).toString('base64url')
   if (Buffer.byteLength(sessionSecret) < 32) {
     throw new Error('SESSION_SECRET must contain at least 32 bytes.')
   }
   if (Buffer.byteLength(inviteCode) < 12) {
     throw new Error('SIGNUP_INVITE_CODE must contain at least 12 bytes.')
   }
-  if (Buffer.byteLength(adminInviteCode) < 12) {
-    throw new Error('ADMIN_SETUP_CODE must contain at least 12 bytes.')
-  }
   if (useVite && !config.inviteCode) {
     logger.warn(`PromptOS development invite code: ${inviteCode}`)
-  }
-  if (useVite && !config.adminInviteCode) {
-    logger.warn(`PromptOS development administrator setup code: ${adminInviteCode}`)
   }
   const dailyLimitValue = Number(config.dailyLimit)
   const dailyLimit = Number.isFinite(dailyLimitValue)
@@ -567,18 +560,14 @@ export async function createPromptOsServer({
         }
 
         if (url.pathname === '/api/auth/register') {
-          const suppliedInvite = typeof body?.inviteCode === 'string' ? body.inviteCode : ''
-          if (!safeEqual(suppliedInvite, inviteCode)) {
-            await recordEvent(request, 'signup', 'invalid_invite')
-            sendJson(response, 403, { error: 'Invitation code is invalid.' })
-            return
-          }
           const isConfiguredAdmin = Boolean(adminEmail && email === adminEmail)
-          const suppliedAdminCode = typeof body?.adminSetupCode === 'string' ? body.adminSetupCode : ''
-          if (isConfiguredAdmin && !safeEqual(suppliedAdminCode, adminInviteCode)) {
-            await recordEvent(request, 'signup', 'invalid_admin_setup_code')
-            sendJson(response, 403, { error: 'Invitation details are invalid.' })
-            return
+          if (!isConfiguredAdmin) {
+            const suppliedInvite = typeof body?.inviteCode === 'string' ? body.inviteCode : ''
+            if (!safeEqual(suppliedInvite, inviteCode)) {
+              await recordEvent(request, 'signup', 'invalid_invite')
+              sendJson(response, 403, { error: 'Invitation code is invalid.' })
+              return
+            }
           }
           const created = await securityStore.createUser(
             email,
@@ -777,9 +766,6 @@ async function start() {
     if (!process.env.SIGNUP_INVITE_CODE || Buffer.byteLength(process.env.SIGNUP_INVITE_CODE) < 12) {
       throw new Error('Set SIGNUP_INVITE_CODE to a private value with at least 12 bytes before production start.')
     }
-    if (!process.env.ADMIN_SETUP_CODE || Buffer.byteLength(process.env.ADMIN_SETUP_CODE) < 12) {
-      throw new Error('Set ADMIN_SETUP_CODE to a separate private value with at least 12 bytes before production start.')
-    }
     if (!process.env.ADMIN_EMAIL) {
       throw new Error('Set ADMIN_EMAIL to the administrator account email before production start.')
     }
@@ -803,10 +789,6 @@ async function start() {
       process.env.SIGNUP_INVITE_CODE = randomBytes(24).toString('base64url')
       console.warn(`PromptOS development invite code: ${process.env.SIGNUP_INVITE_CODE}`)
     }
-    if (!process.env.ADMIN_SETUP_CODE) {
-      process.env.ADMIN_SETUP_CODE = randomBytes(24).toString('base64url')
-      console.warn(`PromptOS development administrator setup code: ${process.env.ADMIN_SETUP_CODE}`)
-    }
   }
   const useDevelopmentEmail = useVite && (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
   const sendEmail = useDevelopmentEmail
@@ -823,7 +805,6 @@ async function start() {
       timeoutMs: Number(process.env.AI_TIMEOUT_MS) || undefined,
       sessionSecret: process.env.SESSION_SECRET,
       inviteCode: process.env.SIGNUP_INVITE_CODE,
-      adminInviteCode: process.env.ADMIN_SETUP_CODE,
       adminEmail: process.env.ADMIN_EMAIL,
       appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${process.env.PORT || 3000}`,
       resendApiKey: process.env.RESEND_API_KEY,

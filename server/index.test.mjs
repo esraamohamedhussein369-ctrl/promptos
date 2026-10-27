@@ -35,7 +35,6 @@ async function startServer(options = {}) {
       apiKey: 'test-provider-key',
       sessionSecret: 'test-session-secret-that-is-at-least-32-bytes',
       inviteCode: 'test-invitation-code',
-      adminInviteCode: 'test-admin-setup-code',
       dailyLimit: 100,
       appUrl: 'https://promptos.example.test',
       ...options.config,
@@ -53,7 +52,7 @@ async function startServer(options = {}) {
     server,
     baseUrl,
     sentEmails,
-    async register(email = 'member@example.com') {
+    async register(email = 'member@example.com', registration = {}) {
       const response = await fetch(`${baseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -61,7 +60,7 @@ async function startServer(options = {}) {
           email,
           password: 'test-password-at-least-12',
           inviteCode: 'test-invitation-code',
-          adminSetupCode: 'test-admin-setup-code',
+          ...registration,
         }),
       })
       const registrationBody = await response.json()
@@ -331,23 +330,13 @@ test('configured administrator email prevents other signups from becoming admini
   assert.equal(admin.body.user.role, 'admin')
 })
 
-test('configured administrator email cannot be reserved without the separate admin setup code', async () => {
-  const { baseUrl, register } = await startServer({ config: { adminEmail: 'owner@example.com' } })
-  const attemptedReservation = await fetch(`${baseUrl}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      email: 'owner@example.com',
-      password: 'attacker-password-123',
-      inviteCode: 'test-invitation-code',
-      adminSetupCode: 'wrong-admin-setup-code',
-    }),
-  })
-  const owner = await register('owner@example.com')
+test('configured administrator can register without an invitation code and must verify email', async () => {
+  const { register } = await startServer({ config: { adminEmail: 'owner@example.com' } })
+  const owner = await register('owner@example.com', { inviteCode: '' })
 
-  assert.equal(attemptedReservation.status, 403)
   assert.equal(owner.response.status, 202)
   assert.equal(owner.body.user.role, 'admin')
+  assert.equal(owner.verificationResponse.status, 200)
 })
 
 test('login uses secure session cookies and logout revokes the session', async () => {
