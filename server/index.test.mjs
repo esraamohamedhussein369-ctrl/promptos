@@ -34,7 +34,6 @@ async function startServer(options = {}) {
     config: {
       apiKey: 'test-provider-key',
       sessionSecret: 'test-session-secret-that-is-at-least-32-bytes',
-      inviteCode: 'test-invitation-code',
       dailyLimit: 100,
       appUrl: 'https://promptos.example.test',
       ...options.config,
@@ -59,7 +58,6 @@ async function startServer(options = {}) {
         body: JSON.stringify({
           email,
           password: 'test-password-at-least-12',
-          inviteCode: 'test-invitation-code',
           ...registration,
         }),
       })
@@ -296,23 +294,13 @@ test('AI endpoints require an authenticated session', async () => {
   assert.equal(response.status, 401)
 })
 
-test('registration is invitation-only and the first account receives admin access', async () => {
-  const { baseUrl, register } = await startServer()
-  const badInvite = await fetch(`${baseUrl}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      email: 'attacker@example.com',
-      password: 'test-password-at-least-12',
-      inviteCode: 'wrong-invite-code',
-    }),
-  })
+test('public registration requires email verification and only configured admin gets admin access', async () => {
+  const { baseUrl, register } = await startServer({ config: { adminEmail: 'admin@example.com' } })
   const first = await register('admin@example.com')
   const second = await register('member@example.com')
   const adminView = await fetch(`${baseUrl}/api/admin/overview`, { headers: { cookie: first.cookie } })
   const memberView = await fetch(`${baseUrl}/api/admin/overview`, { headers: { cookie: second.cookie } })
 
-  assert.equal(badInvite.status, 403)
   assert.equal(first.response.status, 202)
   assert.equal(first.body.user.role, 'admin')
   assert.equal(second.body.user.role, 'user')
@@ -330,9 +318,9 @@ test('configured administrator email prevents other signups from becoming admini
   assert.equal(admin.body.user.role, 'admin')
 })
 
-test('configured administrator can register without an invitation code and must verify email', async () => {
+test('configured administrator can register publicly and must verify email', async () => {
   const { register } = await startServer({ config: { adminEmail: 'owner@example.com' } })
-  const owner = await register('owner@example.com', { inviteCode: '' })
+  const owner = await register('owner@example.com')
 
   assert.equal(owner.response.status, 202)
   assert.equal(owner.body.user.role, 'admin')
@@ -438,7 +426,6 @@ test('registration requires email verification before a session or AI access is 
     body: JSON.stringify({
       email: 'unverified@example.com',
       password: 'test-password-at-least-12',
-      inviteCode: 'test-invitation-code',
     }),
   })
   const body = await response.json()

@@ -25,8 +25,7 @@ The backend supports OpenAI Chat Completions and other providers that implement 
 - `OPENAI_MAX_TOKENS`: maximum response tokens, default `2000`.
 - `AI_TIMEOUT_MS`: provider timeout, default `60000`.
 - `SESSION_SECRET`: random secret, at least 32 bytes, used to protect session tokens, hash client IPs, and derive stored rate-limit keys.
-- `SIGNUP_INVITE_CODE`: private invitation value, at least 12 bytes, required to create accounts.
-- `ADMIN_EMAIL`: email address assigned the administrator role at registration. In production this is required; this address can register without an invitation code but must verify ownership of the email.
+- `ADMIN_EMAIL`: email address assigned the administrator role at registration. In production this is required; all accounts must verify their email before signing in.
 - `AI_DAILY_LIMIT`: maximum AI runs and evaluations combined per account per UTC day, default `20`.
 - `RESEND_API_KEY` and `EMAIL_FROM`: Resend API credential and sender address on a domain verified with Resend.
 - `APP_URL`: public HTTPS URL used for verification and password-reset links. Render's `RENDER_EXTERNAL_URL` is used when this is unset.
@@ -96,7 +95,6 @@ The repository also includes a Vercel Node.js function adapter in `api/[...route
 ```text
 DATABASE_URL=<pooled Neon PostgreSQL connection string>
 SESSION_SECRET=<random value at least 32 bytes>
-SIGNUP_INVITE_CODE=<private invite at least 12 bytes>
 ADMIN_EMAIL=<administrator email>
 OPENAI_API_KEY=<provider key>
 OPENAI_BASE_URL=https://api.groq.com/openai/v1
@@ -113,7 +111,6 @@ Before production, set the variables below using the host's secret/environment c
 NODE_ENV=production
 DATABASE_URL=<PostgreSQL connection string from Neon>
 SESSION_SECRET=<random value at least 32 bytes>
-SIGNUP_INVITE_CODE=<private invite at least 12 bytes>
 ADMIN_EMAIL=<administrator email>
 AI_DAILY_LIMIT=20
 OPENAI_API_KEY=<provider key>
@@ -121,13 +118,13 @@ RESEND_API_KEY=<Resend API key>
 EMAIL_FROM=<sender on your verified Resend domain>
 ```
 
-Generate high-entropy values with Node; Render generates `SESSION_SECRET` automatically, while you provide the two invitation codes through its protected setup prompts:
+Generate a high-entropy `SESSION_SECRET` with Node; Render generates it automatically:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Keep `SIGNUP_INVITE_CODE` private and share it directly only with people you want to invite; PromptOS does not email invitation codes automatically. The configured administrator email can register without this code, but must verify ownership of that address. Rotate the signup invite to stop new registrations. Verify your sending domain in Resend before setting `EMAIL_FROM`; production startup fails closed if AI/email credentials or an HTTPS public URL are missing. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Reset requests use a generic response to avoid disclosing whether an email is registered.
+Account registration is open. Every new account must verify its email before signing in; only the address configured in `ADMIN_EMAIL` receives administrator access. Verify your sending domain in Resend before setting `EMAIL_FROM`; production startup fails closed if AI/email credentials or an HTTPS public URL are missing. Registration sends a one-time email verification link (24-hour expiry), login requires a verified email, and password reset links expire after one hour and revoke the account's existing sessions. Reset requests use a generic response to avoid disclosing whether an email is registered.
 
 The Render blueprint in `render.yaml` configures a Free web service, HTTPS cookies, and trusted proxy address handling. Neon PostgreSQL stores accounts, sessions, quotas, email tokens, security events, and IP rate limits durably. Database-backed IP limits are atomic across processes that share the database. Only trust proxy headers when direct access to the app is blocked by the trusted ingress. The admin dashboard records metadata, never prompt or response contents; event and usage records are retained for 90 days. Prompt workspaces and local analytics remain in each user's browser and are not synced between devices. Accounts created before email verification was introduced will need to use the verification-resend action once to activate their existing address.
 
@@ -135,9 +132,9 @@ For Render deployment:
 
 1. Create a Neon project on its Free plan and copy its pooled PostgreSQL connection string. Keep the connection string private.
 2. Create a Render Blueprint from the GitHub repository; Render reads `render.yaml`. Select the Free web-service plan.
-3. Set `DATABASE_URL` to the Neon connection string, and enter `SIGNUP_INVITE_CODE`, `ADMIN_EMAIL`, `OPENAI_API_KEY`, `RESEND_API_KEY`, and `EMAIL_FROM` in Render's protected environment settings. Do not put credentials in Git.
+3. Set `DATABASE_URL` to the Neon connection string, and enter `ADMIN_EMAIL`, `OPENAI_API_KEY`, `RESEND_API_KEY`, and `EMAIL_FROM` in Render's protected environment settings. Do not put credentials in Git.
 4. Verify the `EMAIL_FROM` domain with Resend; production startup fails closed if the database, AI/email credentials, security settings, or HTTPS public URL are missing. Render's generated public HTTPS URL is used for email links unless `APP_URL` is explicitly configured.
-5. Keep `SESSION_SECRET` and both invite codes private. Share the signup invite only with people you trust, and periodically back up important account data.
+5. Keep `SESSION_SECRET` and provider credentials private, and periodically back up important account data.
 6. Free hosting does not make AI usage or a verified email-sending domain free by itself. Check the current quotas and pricing of Neon, Render, your AI provider, and Resend before inviting users.
 
 GitHub Pages alone is not suitable. A public SaaS launch may additionally require centralized alerting, abuse response, backups/restore drills, billing controls, privacy terms, and a managed database/rate-limit service before horizontal scaling.

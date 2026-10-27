@@ -22,7 +22,6 @@ export function AuthPage() {
   )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -46,7 +45,7 @@ export function AuthPage() {
         await authenticate(email, password)
         navigate('/workspace', { replace: true })
       } else if (mode === 'register') {
-        const result = await registerAccount(email, password, inviteCode)
+        const result = await registerAccount(email, password)
         setSuccess(result.message ?? 'Check your email to verify your account.')
         setMode('login')
       } else if (mode === 'forgot') {
@@ -89,15 +88,15 @@ export function AuthPage() {
   }
 
   const heading = {
-    login: 'Welcome back.',
-    register: 'Create your account.',
-    forgot: 'Reset your password.',
-    reset: 'Choose a new password.',
-    verify: 'Verify your email.',
+    login: 'Welcome back',
+    register: 'Create an account',
+    forgot: 'Reset your password',
+    reset: 'Choose a new password',
+    verify: 'Verify your email',
   }[mode]
   const description = {
     login: 'Sign in to access your prompts and AI tools.',
-    register: 'Use your configured administrator email without an invitation code. Other accounts need a code from the owner. Verify your email before signing in.',
+    register: 'Create your account to start building and evaluating prompts. Verify your email before signing in.',
     forgot: 'Enter your account email. If it is registered, we will send a reset link.',
     reset: 'Choose a new password with at least 12 characters.',
     verify: 'Confirm your email address to activate your PromptOS account.',
@@ -110,7 +109,7 @@ export function AuthPage() {
           <span className="brand-mark">P</span>
           <div><strong>PromptOS</strong><small>Engineering Workbench</small></div>
         </div>
-        <p className="eyebrow">PRIVATE WORKSPACE</p>
+        <p className="eyebrow">AI PROMPT WORKSPACE</p>
         <h1>{heading}</h1>
         <p className="lede">{description}</p>
         {serverError && <div className="alert error" role="alert">{serverError}</div>}
@@ -122,12 +121,6 @@ export function AuthPage() {
           <div className="alert error" role="alert">This verification link is missing. Request a new verification email.</div>
         )}
         <form className="auth-form" onSubmit={submit}>
-          {mode === 'register' && (
-            <label className="field">
-              <span>Invitation code <small>Not needed for the configured administrator email</small></span>
-              <input autoComplete="one-time-code" value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
-            </label>
-          )}
           {(mode === 'login' || mode === 'register' || mode === 'forgot') && (
             <label className="field">
               <span>Email</span>
@@ -168,12 +161,12 @@ export function AuthPage() {
         <div className="auth-links">
           {mode === 'login' && (
             <>
-              <button className="auth-switch" onClick={() => { setMode('forgot'); setError(''); setSuccess('') }}>Forgot your password?</button>
-              <button className="auth-switch" onClick={() => { setMode('register'); setError(''); setSuccess('') }}>Create an account</button>
+              <button type="button" className="auth-switch" onClick={() => { setMode('forgot'); setError(''); setSuccess('') }}>Forgot password?</button>
+              <button type="button" className="auth-switch" onClick={() => { setMode('register'); setError(''); setSuccess('') }}>Create an account</button>
             </>
           )}
-          {mode === 'register' && <button className="auth-switch" onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Already registered? Sign in</button>}
-          {mode !== 'login' && <button className="auth-switch" onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Back to sign in</button>}
+          {mode === 'register' && <button type="button" className="auth-switch" onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Already have an account? Sign in</button>}
+          {mode !== 'login' && mode !== 'register' && <button type="button" className="auth-switch" onClick={() => { setMode('login'); setError(''); setSuccess('') }}>Back to sign in</button>}
         </div>
         <p className="auth-security">Passwords are hashed on the server. Sessions use HTTP-only cookies. Your local prompts remain stored only in this browser.</p>
       </section>

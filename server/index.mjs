@@ -7,7 +7,6 @@ import {
   clearSessionCookie,
   createSecurityStore,
   readCookie,
-  safeEqual,
   sessionCookie,
   sessionCookieName,
 } from './securityStore.mjs'
@@ -305,15 +304,8 @@ export async function createPromptOsServer({
     timeoutMs: Number.isFinite(timeoutMs) ? Math.min(120_000, Math.max(1000, Math.floor(timeoutMs))) : 60_000,
   }
   const sessionSecret = config.sessionSecret ?? randomBytes(32).toString('hex')
-  const inviteCode = config.inviteCode ?? randomBytes(24).toString('base64url')
   if (Buffer.byteLength(sessionSecret) < 32) {
     throw new Error('SESSION_SECRET must contain at least 32 bytes.')
-  }
-  if (Buffer.byteLength(inviteCode) < 12) {
-    throw new Error('SIGNUP_INVITE_CODE must contain at least 12 bytes.')
-  }
-  if (useVite && !config.inviteCode) {
-    logger.warn(`PromptOS development invite code: ${inviteCode}`)
   }
   const dailyLimitValue = Number(config.dailyLimit)
   const dailyLimit = Number.isFinite(dailyLimitValue)
@@ -561,14 +553,6 @@ export async function createPromptOsServer({
 
         if (url.pathname === '/api/auth/register') {
           const isConfiguredAdmin = Boolean(adminEmail && email === adminEmail)
-          if (!isConfiguredAdmin) {
-            const suppliedInvite = typeof body?.inviteCode === 'string' ? body.inviteCode : ''
-            if (!safeEqual(suppliedInvite, inviteCode)) {
-              await recordEvent(request, 'signup', 'invalid_invite')
-              sendJson(response, 403, { error: 'Invitation code is invalid.' })
-              return
-            }
-          }
           const created = await securityStore.createUser(
             email,
             password,
@@ -763,9 +747,6 @@ async function start() {
     if (!process.env.SESSION_SECRET || Buffer.byteLength(process.env.SESSION_SECRET) < 32) {
       throw new Error('Set SESSION_SECRET to a random value with at least 32 bytes before production start.')
     }
-    if (!process.env.SIGNUP_INVITE_CODE || Buffer.byteLength(process.env.SIGNUP_INVITE_CODE) < 12) {
-      throw new Error('Set SIGNUP_INVITE_CODE to a private value with at least 12 bytes before production start.')
-    }
     if (!process.env.ADMIN_EMAIL) {
       throw new Error('Set ADMIN_EMAIL to the administrator account email before production start.')
     }
@@ -785,10 +766,6 @@ async function start() {
   }
   if (useVite) {
     process.env.SESSION_SECRET ||= randomBytes(32).toString('hex')
-    if (!process.env.SIGNUP_INVITE_CODE) {
-      process.env.SIGNUP_INVITE_CODE = randomBytes(24).toString('base64url')
-      console.warn(`PromptOS development invite code: ${process.env.SIGNUP_INVITE_CODE}`)
-    }
   }
   const useDevelopmentEmail = useVite && (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
   const sendEmail = useDevelopmentEmail
@@ -804,7 +781,6 @@ async function start() {
       maxTokens: Number(process.env.OPENAI_MAX_TOKENS) || undefined,
       timeoutMs: Number(process.env.AI_TIMEOUT_MS) || undefined,
       sessionSecret: process.env.SESSION_SECRET,
-      inviteCode: process.env.SIGNUP_INVITE_CODE,
       adminEmail: process.env.ADMIN_EMAIL,
       appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${process.env.PORT || 3000}`,
       resendApiKey: process.env.RESEND_API_KEY,

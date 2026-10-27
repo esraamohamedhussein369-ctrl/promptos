@@ -115,8 +115,8 @@ export function signIn(email: string, password: string) {
   return authRequest('/api/auth/login', { email, password })
 }
 
-export function registerAccount(email: string, password: string, inviteCode: string) {
-  return accountAction('/api/auth/register', { email, password, inviteCode })
+export function registerAccount(email: string, password: string) {
+  return accountAction('/api/auth/register', { email, password })
 }
 
 export function verifyEmail(token: string) {

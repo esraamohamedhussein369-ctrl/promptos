@@ -19,8 +19,6 @@ services:
         value: "20"
       - key: SESSION_SECRET
         generateValue: true
-      - key: SIGNUP_INVITE_CODE
-        sync: false
       - key: ADMIN_EMAIL
         sync: false
       - key: OPENAI_API_KEY
